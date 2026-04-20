@@ -1,0 +1,362 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Parametric Speaker Case Generator (Closed Holes)</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #1e1e1e; color: #eee; font-family: sans-serif; }
+        #ui { 
+            position: absolute; top: 15px; left: 15px; z-index: 100; 
+            background: rgba(40, 40, 40, 0.9); padding: 15px 20px; 
+            border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+            width: 320px; max-height: 90vh; overflow-y: auto;
+        }
+        h3 { margin-top: 0; border-bottom: 1px solid #555; padding-bottom: 10px; font-size: 16px; }
+        .control-group { margin-bottom: 15px; }
+        label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
+        input[type=range] { width: 100%; cursor: pointer; }
+        .checkbox-label { justify-content: flex-start; gap: 10px; cursor: pointer; align-items: center; }
+        .button-group { display: flex; gap: 10px; margin-top: 20px; }
+        button { 
+            flex: 1; background-color: #007acc; color: white; border: none; 
+            padding: 10px; font-size: 13px; border-radius: 4px; cursor: pointer; font-weight: bold;
+        }
+        button:hover { background-color: #005f9e; }
+        button.alt { background-color: #2ea043; }
+        button.alt:hover { background-color: #238636; }
+        #info { margin-top: 15px; font-size: 11px; color: #aaa; line-height: 1.4; }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h3>ケースパラメータ調整</h3>
+        
+        <div class="control-group">
+            <label><span>ケース内寸高さ (mm)</span><span id="valCaseH">35</span></label>
+            <input type="range" id="inpCaseH" min="20" max="50" step="1" value="35">
+        </div>
+        <div class="control-group">
+            <label><span>壁の厚み (mm)</span><span id="valWallT">2.0</span></label>
+            <input type="range" id="inpWallT" min="1.5" max="4.0" step="0.1" value="2.0">
+        </div>
+        
+        <div class="control-group">
+            <label><span>DCジャック穴 幅 (mm)</span><span id="valDcW">12</span></label>
+            <input type="range" id="inpDcW" min="8" max="18" step="0.5" value="12">
+        </div>
+        <div class="control-group">
+            <label><span>DCジャック穴 高さ (mm)</span><span id="valDcH">11</span></label>
+            <input type="range" id="inpDcH" min="8" max="18" step="0.5" value="11">
+        </div>
+
+        <div class="control-group">
+            <label><span>Audioジャック穴 幅 (mm)</span><span id="valAudW">8</span></label>
+            <input type="range" id="inpAudW" min="5" max="14" step="0.5" value="8">
+        </div>
+        <div class="control-group">
+            <label><span>Audioジャック穴 高さ (mm)</span><span id="valAudH">7</span></label>
+            <input type="range" id="inpAudH" min="5" max="14" step="0.5" value="7">
+        </div>
+
+        <div class="control-group">
+            <label class="checkbox-label">
+                <input type="checkbox" id="inpShowLid" checked> 蓋を表示する
+            </label>
+            <label class="checkbox-label">
+                <input type="checkbox" id="inpShowDummy" checked> ダミー基板・部品を表示
+            </label>
+        </div>
+
+        <div class="button-group">
+            <button id="btnExportBase">ベースを保存</button>
+            <button id="btnExportLid" class="alt">蓋を保存</button>
+        </div>
+        
+        <div id="info">
+            ※実際の端子より1〜2mm大きめの穴を推奨します。<br>
+            マウス操作: 回転(左ドラッグ), パン(右ドラッグ), ズーム(ホイール)
+        </div>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/exporters/STLExporter.js"></script>
+
+    <script>
+        // --- 基本セットアップ ---
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x1e1e1e);
+        document.body.appendChild(renderer.domElement);
+
+        const controls = new THREE.OrbitControls(camera, renderer.domElement);
+        camera.position.set(60, 100, 150);
+        controls.target.set(0, 15, 0);
+        controls.update();
+
+        scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+        const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        dirLight.position.set(50, 100, 50);
+        scene.add(dirLight);
+
+        // --- マテリアル定義 ---
+        const matBase = new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.7 });
+        const matLid = new THREE.MeshStandardMaterial({ color: 0x777777, roughness: 0.7, transparent: true, opacity: 0.8 });
+        const matDummyBoard = new THREE.MeshBasicMaterial({ color: 0x00ff00, transparent: true, opacity: 0.3, wireframe: false });
+        const matDummyComp = new THREE.MeshBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.5 });
+        const matDummyCap = new THREE.MeshBasicMaterial({ color: 0x0088ff, transparent: true, opacity: 0.5 });
+
+        // --- グループ ---
+        const baseGroup = new THREE.Group();
+        const lidGroup = new THREE.Group();
+        const dummyGroup = new THREE.Group();
+        scene.add(baseGroup);
+        scene.add(lidGroup);
+        scene.add(dummyGroup);
+
+        // --- 寸法定数 (マニュアル準拠) ---
+        const boardW = 98;
+        const boardD = 65;
+        const clearance = 1.5; // 基板と壁の隙間
+        const standoffH = 5;   // スペーサーの高さ
+        const pcbT = 1.6;      // 基板の厚み
+
+        // UI要素の取得
+        const inputs = {
+            caseH: document.getElementById('inpCaseH'),
+            wallT: document.getElementById('inpWallT'),
+            dcW: document.getElementById('inpDcW'),
+            dcH: document.getElementById('inpDcH'),
+            audW: document.getElementById('inpAudW'),
+            audH: document.getElementById('inpAudH'),
+            showLid: document.getElementById('inpShowLid'),
+            showDummy: document.getElementById('inpShowDummy'),
+        };
+
+        // イベントリスナーの設定
+        Object.keys(inputs).forEach(key => {
+            inputs[key].addEventListener('input', (e) => {
+                if(document.getElementById(`val${key.charAt(0).toUpperCase() + key.slice(1)}`)) {
+                    document.getElementById(`val${key.charAt(0).toUpperCase() + key.slice(1)}`).innerText = e.target.value;
+                }
+                rebuildModel();
+            });
+        });
+
+        // 穴あき壁を4つのブロックで構成するヘルパー関数 (CSG回避策)
+        // originX, originZは壁の中心位置。 width, heightは壁の全体サイズ。
+        // holeX, holeY は左下を原点(0,0)としたときの穴の左下の位置。 holeW, holeH は穴のサイズ。
+        function createWallWithHole(width, height, thickness, holeX, holeY, holeW, holeH, posX, posY, posZ, rotationY) {
+            const group = new THREE.Group();
+            
+            // 下部ブロック
+            if (holeY > 0) {
+                const bGeom = new THREE.BoxGeometry(width, holeY, thickness);
+                const bMesh = new THREE.Mesh(bGeom, matBase);
+                bMesh.position.set(0, holeY/2 - height/2, 0);
+                group.add(bMesh);
+            }
+            // 上部ブロック
+            const topH = height - (holeY + holeH);
+            if (topH > 0) {
+                const tGeom = new THREE.BoxGeometry(width, topH, thickness);
+                const tMesh = new THREE.Mesh(tGeom, matBase);
+                tMesh.position.set(0, height/2 - topH/2, 0);
+                group.add(tMesh);
+            }
+            // 左部ブロック
+            if (holeX > 0) {
+                const lGeom = new THREE.BoxGeometry(holeX, holeH, thickness);
+                const lMesh = new THREE.Mesh(lGeom, matBase);
+                lMesh.position.set(-width/2 + holeX/2, holeY + holeH/2 - height/2, 0);
+                group.add(lMesh);
+            }
+            // 右部ブロック
+            const rightW = width - (holeX + holeW);
+            if (rightW > 0) {
+                const rGeom = new THREE.BoxGeometry(rightW, holeH, thickness);
+                const rMesh = new THREE.Mesh(rGeom, matBase);
+                rMesh.position.set(width/2 - rightW/2, holeY + holeH/2 - height/2, 0);
+                group.add(rMesh);
+            }
+
+            group.position.set(posX, posY, posZ);
+            group.rotation.y = rotationY;
+            baseGroup.add(group);
+        }
+
+        // 単純な壁(穴なし)の作成
+        function createSolidWall(width, height, thickness, posX, posY, posZ, rotationY) {
+            const geom = new THREE.BoxGeometry(width, height, thickness);
+            const mesh = new THREE.Mesh(geom, matBase);
+            mesh.position.set(posX, posY, posZ);
+            mesh.rotation.y = rotationY;
+            baseGroup.add(mesh);
+        }
+
+        // モデルの再構築
+        function rebuildModel() {
+            // クリア
+            while(baseGroup.children.length > 0) baseGroup.remove(baseGroup.children[0]);
+            while(lidGroup.children.length > 0) lidGroup.remove(lidGroup.children[0]);
+            while(dummyGroup.children.length > 0) dummyGroup.remove(dummyGroup.children[0]);
+
+            // 値の取得
+            const wallT = parseFloat(inputs.wallT.value);
+            const innerH = parseFloat(inputs.caseH.value);
+            const dcW = parseFloat(inputs.dcW.value);
+            const dcH = parseFloat(inputs.dcH.value);
+            const audW = parseFloat(inputs.audW.value);
+            const audH = parseFloat(inputs.audH.value);
+            
+            const outerW = boardW + clearance*2 + wallT*2;
+            const outerD = boardD + clearance*2 + wallT*2;
+            const outerH = innerH + wallT; // 底板分プラス
+
+            const holeBaseY = wallT + standoffH + pcbT; // 端子が基板に乗る高さ
+
+            // --- 1. ベース（本体）の構築 ---
+            // 底板
+            const bottom = new THREE.Mesh(new THREE.BoxGeometry(outerW, wallT, outerD), matBase);
+            bottom.position.y = wallT/2;
+            baseGroup.add(bottom);
+
+            const wallCenterY = wallT + innerH/2;
+
+            // 前面 (穴なし)
+            createSolidWall(outerW, innerH, wallT, 0, wallCenterY, outerD/2 - wallT/2, 0);
+
+            // 背面 (DCジャック穴)
+            // 基板中心から見て左寄り(マニュアル配置)
+            const dcOffsetX = 12; // 中心からのズレ
+            const holeDcX = (outerW/2) - (dcW/2) - dcOffsetX - (outerW/2 - boardW/2); 
+            const holeDcLocalX = (outerW / 2) - dcOffsetX - dcW/2; // 左下基準の位置計算
+            createWallWithHole(outerW, innerH, wallT, holeDcLocalX, holeBaseY - wallT, dcW, dcH, 0, wallCenterY, -(outerD/2 - wallT/2), 0);
+
+            // 右側面 (Audioジャック穴)
+            // 基板右下寄り
+            const audOffsetZ = 15;
+            const holeAudLocalX = (outerD / 2) + audOffsetZ - audW/2; // 横幅はouterDになる
+            createWallWithHole(outerD, innerH, wallT, holeAudLocalX, holeBaseY - wallT, audW, audH, outerW/2 - wallT/2, wallCenterY, 0, Math.PI/2);
+
+            // 左側面 (出力配線用穴)
+            const wireW = 15;
+            const wireH = 8;
+            const holeWireLocalX = (outerD / 2) - wireW/2; // 中央配置
+            createWallWithHole(outerD, innerH, wallT, holeWireLocalX, holeBaseY - wallT, wireW, wireH, -(outerW/2 - wallT/2), wallCenterY, 0, Math.PI/2);
+
+            // スペーサー (88x55mm)
+            const holeX = 88 / 2;
+            const holeZ = 55 / 2;
+            const standoffGeom = new THREE.CylinderGeometry(3.5, 3.5, standoffH, 16);
+            const screwHoleGeom = new THREE.CylinderGeometry(1.2, 1.2, standoffH + wallT + 1, 16); // くり抜き用(今回は簡易的に表現)
+            
+            [[-holeX, -holeZ], [holeX, -holeZ], [-holeX, holeZ], [holeX, holeZ]].forEach(pos => {
+                const standoff = new THREE.Mesh(standoffGeom, matBase);
+                standoff.position.set(pos[0], wallT + standoffH/2, pos[1]);
+                baseGroup.add(standoff);
+            });
+
+            // --- 2. 蓋（リッド）の構築 ---
+            if(inputs.showLid.checked) {
+                const lidT = wallT;
+                const lidGap = 0.4; // ベースとの公差(はめ合い余裕)
+                const lipH = 3;     // リップの長さ
+
+                // 蓋の天板
+                const top = new THREE.Mesh(new THREE.BoxGeometry(outerW, lidT, outerD), matLid);
+                top.position.y = outerH + lidT/2;
+                lidGroup.add(top);
+
+                // 内側のズレ防止リップ (前後左右の4本)
+                const lipW = outerW - wallT*2 - lidGap*2;
+                const lipD = outerD - wallT*2 - lidGap*2;
+                const lipMat = matLid;
+
+                const lipF = new THREE.Mesh(new THREE.BoxGeometry(lipW, lipH, lidT), lipMat);
+                lipF.position.set(0, outerH - lipH/2, lipD/2 - lidT/2);
+                const lipB = new THREE.Mesh(new THREE.BoxGeometry(lipW, lipH, lidT), lipMat);
+                lipB.position.set(0, outerH - lipH/2, -(lipD/2 - lidT/2));
+                const lipL = new THREE.Mesh(new THREE.BoxGeometry(lidT, lipH, lipD - lidT*2), lipMat);
+                lipL.position.set(-(lipW/2 - lidT/2), outerH - lipH/2, 0);
+                const lipR = new THREE.Mesh(new THREE.BoxGeometry(lidT, lipH, lipD - lidT*2), lipMat);
+                lipR.position.set(lipW/2 - lidT/2, outerH - lipH/2, 0);
+
+                lidGroup.add(lipF); lidGroup.add(lipB); lidGroup.add(lipL); lidGroup.add(lipR);
+                
+                // 蓋を少し浮かせて表示
+                lidGroup.position.y = 15; 
+            }
+
+            // --- 3. ダミー部品の構築 (視覚確認用) ---
+            if(inputs.showDummy.checked) {
+                // PCB
+                const pcb = new THREE.Mesh(new THREE.BoxGeometry(boardW, pcbT, boardD), matDummyBoard);
+                pcb.position.y = wallT + standoffH + pcbT/2;
+                dummyGroup.add(pcb);
+
+                // DC Dummy
+                const dc = new THREE.Mesh(new THREE.BoxGeometry(dcW-1, dcH-1, 14), matDummyComp);
+                dc.position.set(-dcOffsetX, holeBaseY + dcH/2, -boardD/2 + 7);
+                dummyGroup.add(dc);
+
+                // Audio Dummy
+                const aud = new THREE.Mesh(new THREE.BoxGeometry(14, audH-1, audW-1), matDummyComp);
+                aud.position.set(boardW/2 - 7, holeBaseY + audH/2, audOffsetZ);
+                dummyGroup.add(aud);
+
+                // C12 Capacitor (3300uF) Dummy (直径16mm, 高さ25mmと想定)
+                const capH = 25;
+                const cap = new THREE.Mesh(new THREE.CylinderGeometry(8, 8, capH, 16), matDummyCap);
+                cap.position.set(-20, holeBaseY + capH/2, 15); // 実体図から概算の位置
+                dummyGroup.add(cap);
+            }
+        }
+
+        // --- STLエクスポート処理 ---
+        function exportSTL(group, filename) {
+            const exporter = new THREE.STLExporter();
+            const stlString = exporter.parse(group);
+            const blob = new Blob([stlString], { type: 'text/plain' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = filename;
+            link.click();
+        }
+
+        document.getElementById('btnExportBase').addEventListener('click', () => {
+            // ダミーや蓋は含まれないように baseGroup のみ渡す
+            exportSTL(baseGroup, 'ts_speaker_base.stl');
+        });
+
+        document.getElementById('btnExportLid').addEventListener('click', () => {
+            // 蓋グループを出力する前に位置を原点に戻す
+            const currentY = lidGroup.position.y;
+            lidGroup.position.y = 0;
+            lidGroup.updateMatrixWorld(true);
+            exportSTL(lidGroup, 'ts_speaker_lid.stl');
+            lidGroup.position.y = currentY; // 元に戻す
+        });
+
+        // ウィンドウリサイズ
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        // アニメーションループ
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // 初期構築と開始
+        rebuildModel();
+        animate();
+    </script>
+</body>
+</html>
