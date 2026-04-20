@@ -2,18 +2,18 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Parametric Speaker Case Generator (Position Fixed)</title>
+    <title>Parametric Speaker Case Generator (Perfect Fit Lid)</title>
     <style>
         body { margin: 0; overflow: hidden; background-color: #1e1e1e; color: #eee; font-family: sans-serif; }
         #ui { 
             position: absolute; top: 15px; left: 15px; z-index: 100; 
             background: rgba(40, 40, 40, 0.95); padding: 15px 20px; 
             border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.8);
-            width: 320px; max-height: 90vh; overflow-y: auto;
+            width: 330px; max-height: 90vh; overflow-y: auto;
         }
         h3 { margin-top: 0; border-bottom: 1px solid #555; padding-bottom: 10px; font-size: 16px; }
-        .section-title { font-size: 12px; color: #aaa; margin: 15px 0 5px 0; border-bottom: 1px dotted #555; padding-bottom: 3px; }
-        .control-group { margin-bottom: 12px; }
+        .section-title { font-size: 12px; color: #aaa; margin: 15px 0 5px 0; border-bottom: 1px dotted #555; padding-bottom: 3px; font-weight: bold; }
+        .control-group { margin-bottom: 10px; }
         label { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: 4px; }
         input[type=range] { width: 100%; cursor: pointer; }
         .checkbox-label { justify-content: flex-start; gap: 10px; cursor: pointer; align-items: center; margin-top: 5px; }
@@ -26,6 +26,7 @@
         button.alt { background-color: #2ea043; }
         button.alt:hover { background-color: #238636; }
         #info { margin-top: 15px; font-size: 11px; color: #999; line-height: 1.4; }
+        .highlight { color: #58a6ff; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -40,6 +41,16 @@
         <div class="control-group">
             <label><span>壁の厚み (mm)</span><span id="valWallT">2.0</span></label>
             <input type="range" id="inpWallT" min="1.5" max="4.0" step="0.1" value="2.0">
+        </div>
+
+        <div class="section-title" style="color: #58a6ff;">蓋の嵌合（かんごう）設定</div>
+        <div class="control-group">
+            <label><span>隙間(クリアランス) (mm)</span><span id="valLidClearance" class="highlight">0.3</span></label>
+            <input type="range" id="inpLidClearance" min="0" max="1.0" step="0.05" value="0.3">
+        </div>
+        <div class="control-group">
+            <label><span>リップ(差込部)高さ (mm)</span><span id="valLipH">3.0</span></label>
+            <input type="range" id="inpLipH" min="1.0" max="8.0" step="0.5" value="3.0">
         </div>
         
         <div class="section-title">DCジャック (背面)</div>
@@ -82,7 +93,7 @@
         </div>
         
         <div id="info">
-            ※ダミー部品（オレンジ色）の位置と穴が完全に連動するようになりました。基板に合わせて微調整してください。
+            ※蓋がキツイ場合は「隙間(クリアランス)」を 0.4～0.5 に、緩い場合は 0.1～0.2 に調整して出力し直してください。（一般的なFDMプリンタは 0.2～0.3 推奨）
         </div>
     </div>
 
@@ -128,6 +139,8 @@
         const inputs = {
             caseH: document.getElementById('inpCaseH'),
             wallT: document.getElementById('inpWallT'),
+            lidClearance: document.getElementById('inpLidClearance'),
+            lipH: document.getElementById('inpLipH'),
             dcOffsetX: document.getElementById('inpDcOffsetX'),
             dcW: document.getElementById('inpDcW'),
             dcH: document.getElementById('inpDcH'),
@@ -190,6 +203,8 @@
 
             const wallT = parseFloat(inputs.wallT.value);
             const innerH = parseFloat(inputs.caseH.value);
+            const lidGap = parseFloat(inputs.lidClearance.value); // 新規: 蓋のクリアランス
+            const lipH = parseFloat(inputs.lipH.value);           // 新規: リップの高さ
             const dcOffsetX = parseFloat(inputs.dcOffsetX.value);
             const dcW = parseFloat(inputs.dcW.value);
             const dcH = parseFloat(inputs.dcH.value);
@@ -217,7 +232,6 @@
             createWallWithHole(outerW, innerH, wallT, holeDcLocalX, holeBaseY - wallT, dcW, dcH, 0, wallCenterY, -(outerD/2 - wallT/2), 0);
 
             // 右側面 (Audioジャック)
-            // 修正箇所: 壁が90度回転しているため、Global Z(奥方向)に進むにはLocal Xを引く必要があります
             const holeAudLocalX = (outerD / 2) - audOffsetZ - audW/2; 
             createWallWithHole(outerD, innerH, wallT, holeAudLocalX, holeBaseY - wallT, audW, audH, outerW/2 - wallT/2, wallCenterY, 0, Math.PI/2);
 
@@ -243,20 +257,34 @@
                 top.position.y = outerH + lidT/2;
                 lidGroup.add(top);
 
-                const lipW = outerW - wallT*2 - 0.8;
-                const lipD = outerD - wallT*2 - 0.8;
-                const lipH = 3;
+                // --- 蓋のリップ（差し込み部）の精密計算 ---
+                // ベースの内寸
+                const innerSpaceW = outerW - wallT*2;
+                const innerSpaceD = outerD - wallT*2;
 
-                const lipF = new THREE.Mesh(new THREE.BoxGeometry(lipW, lipH, lidT), matLid);
-                lipF.position.set(0, outerH - lipH/2, lipD/2 - lidT/2);
-                const lipB = new THREE.Mesh(new THREE.BoxGeometry(lipW, lipH, lidT), matLid);
-                lipB.position.set(0, outerH - lipH/2, -(lipD/2 - lidT/2));
-                const lipL = new THREE.Mesh(new THREE.BoxGeometry(lidT, lipH, lipD - lidT*2), matLid);
-                lipL.position.set(-(lipW/2 - lidT/2), outerH - lipH/2, 0);
-                const lipR = new THREE.Mesh(new THREE.BoxGeometry(lidT, lipH, lipD - lidT*2), matLid);
-                lipR.position.set(lipW/2 - lidT/2, outerH - lipH/2, 0);
+                // リップの外寸 = ベース内寸 - 両側のクリアランス
+                const lipOuterW = innerSpaceW - (lidGap * 2);
+                const lipOuterD = innerSpaceD - (lidGap * 2);
+
+                // リップの厚み (1.5mm程度を確保、ただし壁よりは薄くする)
+                const lipThickness = Math.min(1.5, wallT - 0.2); 
+
+                // 前後のリップ板
+                const lipF = new THREE.Mesh(new THREE.BoxGeometry(lipOuterW, lipH, lipThickness), matLid);
+                lipF.position.set(0, outerH - lipH/2, lipOuterD/2 - lipThickness/2);
+                const lipB = new THREE.Mesh(new THREE.BoxGeometry(lipOuterW, lipH, lipThickness), matLid);
+                lipB.position.set(0, outerH - lipH/2, -(lipOuterD/2 - lipThickness/2));
+                
+                // 左右のリップ板 (前後の板に挟まれるように幅を計算)
+                const lipSideD = lipOuterD - (lipThickness * 2);
+                const lipL = new THREE.Mesh(new THREE.BoxGeometry(lipThickness, lipH, lipSideD), matLid);
+                lipL.position.set(-(lipOuterW/2 - lipThickness/2), outerH - lipH/2, 0);
+                const lipR = new THREE.Mesh(new THREE.BoxGeometry(lipThickness, lipH, lipSideD), matLid);
+                lipR.position.set(lipOuterW/2 - lipThickness/2, outerH - lipH/2, 0);
 
                 lidGroup.add(lipF); lidGroup.add(lipB); lidGroup.add(lipL); lidGroup.add(lipR);
+                
+                // プレビュー用に蓋を少し浮かせる
                 lidGroup.position.y = 15; 
             }
 
@@ -270,7 +298,6 @@
                 dc.position.set(dcOffsetX, holeBaseY + dcH/2, -boardD/2 + 7);
                 dummyGroup.add(dc);
 
-                // Audio Dummy
                 const aud = new THREE.Mesh(new THREE.BoxGeometry(14, audH-1, audW-1), matDummyComp);
                 aud.position.set(boardW/2 - 7, holeBaseY + audH/2, audOffsetZ);
                 dummyGroup.add(aud);
