@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>パラメトリックスピーカー ケース設計アプリ</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Helvetica Neue', Arial, 'Hiragino Kaku Gothic ProN', 'Hiragino Sans', Meiryo, sans-serif;
+      background-color: #1a1a2e;
+      color: #fff;
+    }
+    #ui-container {
+      position: absolute;
+      top: 20px;
+      left: 20px;
+      background: rgba(15, 52, 96, 0.85);
+      padding: 20px;
+      border-radius: 12px;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+      backdrop-filter: blur(5px);
+      border: 1px solid rgba(255,255,255,0.1);
+      z-index: 10;
+      width: 300px;
+    }
+    h1 {
+      font-size: 1.2rem;
+      margin: 0 0 10px 0;
+      color: #e94560;
+    }
+    p {
+      font-size: 0.85rem;
+      line-height: 1.4;
+      margin-bottom: 15px;
+      color: #ddd;
+    }
+    .control-group {
+      margin-bottom: 15px;
+    }
+    label {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.9rem;
+      margin-bottom: 5px;
+    }
+    input[type="range"] {
+      width: 100%;
+      cursor: pointer;
+    }
+    select {
+      width: 100%;
+      padding: 8px;
+      background: #162447;
+      color: white;
+      border: 1px solid #e94560;
+      border-radius: 6px;
+      margin-bottom: 10px;
+    }
+    .btn-group {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    button {
+      background-color: #e94560;
+      color: white;
+      border: none;
+      padding: 10px;
+      font-size: 0.9rem;
+      border-radius: 8px;
+      cursor: pointer;
+      width: 100%;
+      font-weight: bold;
+      transition: background-color 0.2s, transform 0.1s;
+    }
+    button:hover {
+      background-color: #ff5277;
+    }
+    button:active {
+      transform: scale(0.98);
+    }
+    #canvas-container {
+      width: 100vw;
+      height: 100vh;
+      display: block;
+    }
+    .info {
+      font-size: 0.75rem;
+      color: #aab;
+      margin-top: 10px;
+      text-align: center;
+    }
+  </style>
+
+  <!-- Import maps polyfill -->
+  <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+  <!-- Three.js Import Map -->
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+</head>
+<body>
+
+  <div id="ui-container">
+    <h1>ケース＆蓋 設計アプリ</h1>
+    <p>パラメータを調整し、STLファイルを出力してください。</p>
+    
+    <div class="control-group">
+      <label>表示</label>
+      <select id="view-mode">
+        <option value="both">すべて</option>
+        <option value="case">ケース本体</option>
+        <option value="lid">蓋</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label>
+        <span>ワイヤー穴幅 (mm)</span>
+        <span id="hole-width-val">15</span>
+      </label>
+      <input type="range" id="hole-width" min="5" max="50" value="15" step="1">
+    </div>
+
+    <div class="control-group">
+      <label>
+        <span>蓋クリアランス (mm)</span>
+        <span id="lid-clearance-val">0.4</span>
+      </label>
+      <input type="range" id="lid-clearance" min="0.0" max="1.0" value="0.4" step="0.1">
+      <div style="font-size: 0.7rem; color: #aab;">※はめ込みがきつい場合は数値を大きくしてください。</div>
+    </div>
+
+    <div class="btn-group">
+      <button id="export-case-btn">ケース本体のDL</button>
+      <button id="export-lid-btn">蓋のDL</button>
+    </div>
+    
+    <div class="info">※各パーツごとにSTLファイルを出力できます。</div>
+  </div>
+
+  <div id="canvas-container"></div>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+    import { STLExporter } from 'three/addons/exporters/STLExporter.js';
+    import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+
+    // --- Scene Setup ---
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x1a1a2e);
+
+    const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+    camera.position.set(0, -120, 120);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    container.appendChild(renderer.domElement);
+
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enableDamping = true;
+
+    // --- Lighting ---
+    const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+    scene.add(ambientLight);
+
+    const dirLight1 = new THREE.DirectionalLight(0xffffff, 0.8);
+    dirLight1.position.set(50, 100, 100);
+    scene.add(dirLight1);
+
+    const dirLight2 = new THREE.DirectionalLight(0xaabbff, 0.4);
+    dirLight2.position.set(-50, -100, -50);
+    scene.add(dirLight2);
+
+    // Grid helper
+    const gridHelper = new THREE.GridHelper(200, 20, 0x444455, 0x222233);
+    gridHelper.rotation.x = Math.PI / 2;
+    scene.add(gridHelper);
+
+    // --- Materials & Group ---
+    const caseMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x44aa88, roughness: 0.6, metalness: 0.1 
+    });
+    const lidMaterial = new THREE.MeshStandardMaterial({ 
+      color: 0x4488aa, roughness: 0.6, metalness: 0.1,
+      transparent: true, opacity: 0.85
+    });
+
+    const modelGroup = new THREE.Group();
+    scene.add(modelGroup);
+    let caseMesh = null;
+    let lidMesh = null;
+
+    // Dimensions from manual
+    const boardW = 98;
+    const boardH = 55;
+    const holesW = 70.6;
+    const holesH = 49;
+    
+    // Case design dimensions
+    const tolerance = 1;
+    const innerW = boardW + tolerance * 2;
+    const innerH = boardH + tolerance * 2;
+    const wallThick = 2;
+    const outerW = innerW + wallThick * 2;
+    const outerH = innerH + wallThick * 2;
+    const baseThick = 2;
+    const standoffH = 4;
+    const totalDepth = baseThick + standoffH + 4; // 10mm
+
+    // Lid design dimensions
+    const lidThick = 2;
+    const lidOverlap = 6; // How much it slides over the case
+    const lidCavityDepth = 18; // Enough depth to cover the 10mm leads + transducer body
+
+    function generateModels(wireHoleWidth, lidClearance) {
+      // Cleanup previous meshes
+      if (caseMesh) { modelGroup.remove(caseMesh); caseMesh.geometry.dispose(); }
+      if (lidMesh) { modelGroup.remove(lidMesh); lidMesh.geometry.dispose(); }
+
+      // ==========================================
+      // 1. Generate Case
+      // ==========================================
+      const caseGeos = [];
+
+      // Base Plate
+      const baseGeo = new THREE.BoxGeometry(outerW, outerH, baseThick);
+      baseGeo.translate(0, 0, baseThick / 2);
+      caseGeos.push(baseGeo);
+
+      // Side Walls
+      const wallZ = baseThick + (totalDepth - baseThick) / 2;
+      const wallD = totalDepth - baseThick;
+
+      const leftWall = new THREE.BoxGeometry(wallThick, outerH, wallD);
+      leftWall.translate(-innerW/2 - wallThick/2, 0, wallZ);
+      caseGeos.push(leftWall);
+
+      const rightWall = new THREE.BoxGeometry(wallThick, outerH, wallD);
+      rightWall.translate(innerW/2 + wallThick/2, 0, wallZ);
+      caseGeos.push(rightWall);
+
+      const bottomWall = new THREE.BoxGeometry(innerW, wallThick, wallD);
+      bottomWall.translate(0, -innerH/2 - wallThick/2, wallZ);
+      caseGeos.push(bottomWall);
+
+      // Top Wall (Split for wire hole)
+      const topWallPartW = Math.max(0, (innerW - wireHoleWidth) / 2);
+      if (topWallPartW > 0) {
+        const topLeftWall = new THREE.BoxGeometry(topWallPartW, wallThick, wallD);
+        topLeftWall.translate(-wireHoleWidth/2 - topWallPartW/2, innerH/2 + wallThick/2, wallZ);
+        caseGeos.push(topLeftWall);
+
+        const topRightWall = new THREE.BoxGeometry(topWallPartW, wallThick, wallD);
+        topRightWall.translate(wireHoleWidth/2 + topWallPartW/2, innerH/2 + wallThick/2, wallZ);
+        caseGeos.push(topRightWall);
+      }
+
+      // Standoffs (Mounting pillars)
+      const shape = new THREE.Shape();
+      shape.absarc(0, 0, 3.5, 0, Math.PI * 2, false);
+      const hole = new THREE.Path();
+      hole.absarc(0, 0, 1.25, 0, Math.PI * 2, true);
+      shape.holes.push(hole);
+      
+      const extrudeSettings = { depth: standoffH, bevelEnabled: false, curveSegments: 32 };
+      const positions = [
+        [holesW/2, holesH/2], [-holesW/2, holesH/2],
+        [holesW/2, -holesH/2], [-holesW/2, -holesH/2]
+      ];
+
+      positions.forEach(p => {
+        const standoffGeo = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        standoffGeo.translate(p[0], p[1], baseThick);
+        caseGeos.push(standoffGeo);
+      });
+
+      const cleanCaseGeos = caseGeos.map(g => {
+        const geom = g.index ? g.toNonIndexed() : g.clone();
+        geom.deleteAttribute('uv');
+        return geom;
+      });
+      caseMesh = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(cleanCaseGeos), caseMaterial);
+      modelGroup.add(caseMesh);
+
+
+      // ==========================================
+      // 2. Generate Lid
+      // ==========================================
+      const lidGeos = [];
+      
+      // Lid inner dims = Case outer dims + clearance
+      const lidInnerW = outerW + lidClearance * 2;
+      const lidInnerH = outerH + lidClearance * 2;
+      const lidOuterW = lidInnerW + wallThick * 2;
+      const lidOuterH = lidInnerH + wallThick * 2;
+
+      // Lid Z positioning logic
+      const lidRimStartZ = totalDepth - lidOverlap; // Starts sliding over the case
+      const lidRimEndZ = lidRimStartZ + lidCavityDepth;
+      const lidRimCenterZ = lidRimStartZ + lidCavityDepth / 2;
+      const lidTopCenterZ = lidRimEndZ + lidThick / 2;
+
+      // Lid Front Cover
+      const lidTopPlate = new THREE.BoxGeometry(lidOuterW, lidOuterH, lidThick);
+      lidTopPlate.translate(0, 0, lidTopCenterZ);
+      lidGeos.push(lidTopPlate);
+
+      // Lid Side Walls (Rim)
+      const lidLeftWall = new THREE.BoxGeometry(wallThick, lidOuterH, lidCavityDepth);
+      lidLeftWall.translate(-lidInnerW/2 - wallThick/2, 0, lidRimCenterZ);
+      lidGeos.push(lidLeftWall);
+
+      const lidRightWall = new THREE.BoxGeometry(wallThick, lidOuterH, lidCavityDepth);
+      lidRightWall.translate(lidInnerW/2 + wallThick/2, 0, lidRimCenterZ);
+      lidGeos.push(lidRightWall);
+
+      const lidBottomWall = new THREE.BoxGeometry(lidInnerW, wallThick, lidCavityDepth);
+      lidBottomWall.translate(0, -lidInnerH/2 - wallThick/2, lidRimCenterZ);
+      lidGeos.push(lidBottomWall);
+
+      // Lid Top Wall (Rim split for wire hole)
+      const lidTopWallPartW = Math.max(0, (lidInnerW - wireHoleWidth) / 2);
+      if (lidTopWallPartW > 0) {
+        const lidTopLeftWall = new THREE.BoxGeometry(lidTopWallPartW, wallThick, lidCavityDepth);
+        lidTopLeftWall.translate(-wireHoleWidth/2 - lidTopWallPartW/2, lidInnerH/2 + wallThick/2, lidRimCenterZ);
+        lidGeos.push(lidTopLeftWall);
+
+        const lidTopRightWall = new THREE.BoxGeometry(lidTopWallPartW, wallThick, lidCavityDepth);
+        lidTopRightWall.translate(wireHoleWidth/2 + lidTopWallPartW/2, lidInnerH/2 + wallThick/2, lidRimCenterZ);
+        lidGeos.push(lidTopRightWall);
+      }
+
+      const cleanLidGeos = lidGeos.map(g => {
+        const geom = g.index ? g.toNonIndexed() : g.clone();
+        geom.deleteAttribute('uv');
+        return geom;
+      });
+      lidMesh = new THREE.Mesh(BufferGeometryUtils.mergeGeometries(cleanLidGeos), lidMaterial);
+      modelGroup.add(lidMesh);
+
+      // Center the entire group
+      caseMesh.geometry.computeBoundingBox();
+      const bb = caseMesh.geometry.boundingBox;
+      modelGroup.position.set(0, 0, -bb.max.z / 2);
+
+      updateViewMode();
+    }
+
+    // --- UI Interactions ---
+    let currentHoleWidth = parseInt(document.getElementById('hole-width').value);
+    let currentLidClearance = parseFloat(document.getElementById('lid-clearance').value);
+
+    function updateViewMode() {
+      const mode = document.getElementById('view-mode').value;
+      if (mode === 'both') {
+        caseMesh.visible = true;
+        lidMesh.visible = true;
+        lidMesh.position.z = 25; // Offset to show it's a separate piece
+      } else if (mode === 'case') {
+        caseMesh.visible = true;
+        lidMesh.visible = false;
+        lidMesh.position.z = 0;
+      } else if (mode === 'lid') {
+        caseMesh.visible = false;
+        lidMesh.visible = true;
+        lidMesh.position.z = 0;
+      }
+    }
+
+    document.getElementById('view-mode').addEventListener('change', updateViewMode);
+
+    document.getElementById('hole-width').addEventListener('input', (e) => {
+      currentHoleWidth = parseInt(e.target.value);
+      document.getElementById('hole-width-val').textContent = currentHoleWidth;
+      generateModels(currentHoleWidth, currentLidClearance);
+    });
+
+    document.getElementById('lid-clearance').addEventListener('input', (e) => {
+      currentLidClearance = parseFloat(e.target.value);
+      document.getElementById('lid-clearance-val').textContent = currentLidClearance.toFixed(1);
+      generateModels(currentHoleWidth, currentLidClearance);
+    });
+
+    // Export Function
+    function exportMesh(meshToExport, filename) {
+      if (!meshToExport) return;
+      
+      // Temporarily reset position for clean export
+      const prevZ = meshToExport.position.z;
+      meshToExport.position.z = 0; 
+      meshToExport.updateMatrixWorld(true); // 強制的に位置情報を更新するでござる！
+      
+      const exporter = new STLExporter();
+      // scene全体ではなく、対象のメッシュだけをピンポイントでパースするぜ！
+      const stlString = exporter.parse(meshToExport);
+      
+      // Restore position
+      meshToExport.position.z = prevZ;
+      meshToExport.updateMatrixWorld(true);
+      
+      const blob = new Blob([stlString], { type: 'text/plain' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.style.display = 'none';
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    document.getElementById('export-case-btn').addEventListener('click', () => {
+      exportMesh(caseMesh, 'ParametricSpeaker_CaseBody_Iroha.stl');
+    });
+
+    document.getElementById('export-lid-btn').addEventListener('click', () => {
+      exportMesh(lidMesh, 'ParametricSpeaker_Lid_Iroha.stl');
+    });
+
+    // Initialize
+    generateModels(currentHoleWidth, currentLidClearance);
+
+    // --- Render Loop ---
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // --- Window Resize ---
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
