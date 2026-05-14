@@ -35,6 +35,3 @@ cd parametric-speaker-case-model
 
 ## APIリファレンス / ドキュメント
 - 実装は主に `ControlBoard/index.html` と `SpeakerBody/index.html` 内のインラインスクリプトにあります。これらのファイルを参照してください。
-
-## ライセンス
-現時点でリポジトリ内にライセンス表記はありません。希望するライセンス（例: MIT License）を指示してください。
