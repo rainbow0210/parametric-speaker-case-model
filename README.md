@@ -1,4 +1,7 @@
 # parametric-speaker-case-model
+
+Coding by Gemini 3.1 Pro
+
 ## 概要
 秋月電子のパラメトリックスピーカー実験キット（ https://akizukidenshi.com/catalog/g/g102617/ ）向けの保護ケースを生成するためのブラウザベースの設計アプリケーションです。ユーザが寸法や端子位置などのパラメータを調整して、ケース本体と蓋のSTLファイルを出力できます。
 
